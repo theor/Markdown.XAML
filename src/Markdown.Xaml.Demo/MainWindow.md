@@ -1,5 +1,9 @@
 ﻿# Markdown.Xaml #
 
+![img](https://daringfireball.net/graphics/logos/)
+
+[Markdown syntax reference](https://daringfireball.net/projects/markdown/syntax)
+
 Markdown XAML is a port of the popular *MarkdownSharp* Markdown processor, but 
 with one very significant difference: Instead of rendering to a string 
 containing HTML, it renders to a FlowDocument suitable for embedding into a 

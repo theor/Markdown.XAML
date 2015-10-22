@@ -1,14 +1,17 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 
 namespace Markdown.Xaml
@@ -103,11 +106,32 @@ namespace Markdown.Xaml
             DependencyProperty.Register("CodeStyle", typeof(Style), typeof(Markdown), new PropertyMetadata(null));
 
 
+        class DelegateCommand : ICommand
+        {
+            public Action<object> ExecuteDelegate;
 
+            public DelegateCommand(Action<object> executeDelegate)
+            {
+                ExecuteDelegate = executeDelegate;
+            }
+
+            public bool CanExecute(object parameter)
+            {
+                return true;
+            }
+
+            public void Execute(object parameter)
+            {
+                ExecuteDelegate(parameter);
+            }
+
+            public event EventHandler CanExecuteChanged;
+        }
 
         public Markdown()
         {
-            HyperlinkCommand = NavigationCommands.GoToPage;
+            HyperlinkCommand = new RoutedCommand();// NavigationCommands.GoToPage;
+            HyperlinkCommand = new DelegateCommand(x => Process.Start((string)x));
         }
 
         public FlowDocument Transform(string text)
@@ -169,9 +193,10 @@ namespace Markdown.Xaml
             }
 
             return DoCodeSpans(text,
-                s0 => DoAnchors(s0,
-                s1 => DoItalicsAndBold(s1,
-                s2 => DoText(s2))));
+                s0 => DoImages(s0,
+                s1 => DoAnchors(s1,
+                s2 => DoItalicsAndBold(s2,
+                s3 => DoText(s3)))));
 
             //text = EscapeSpecialCharsWithinTagAttributes(text);
             //text = EscapeBackslashes(text);
@@ -239,7 +264,29 @@ namespace Markdown.Xaml
         }
 
         private static string _nestedParensPattern;
+        private static string _nestedParensPatternWithWhiteSpace;
 
+        /// <summary>
+        /// Reusable pattern to match balanced (parens), including whitespace. See Friedl's 
+        /// "Mastering Regular Expressions", 2nd Ed., pp. 328-331.
+        /// </summary>
+        private static string GetNestedParensPatternWithWhiteSpace()
+        {
+            // in other words (this) and (this(also)) and (this(also(too)))
+            // up to _nestDepth
+            if (_nestedParensPatternWithWhiteSpace == null)
+                _nestedParensPatternWithWhiteSpace =
+                    RepeatString(@"
+                    (?>              # Atomic matching
+                       [^()]+      # Anything other than parens
+                     |
+                       \(
+                           ", _nestDepth) + RepeatString(
+                    @" \)
+                    )*"
+                    , _nestDepth);
+            return _nestedParensPatternWithWhiteSpace;
+        }
         /// <summary>
         /// Reusable pattern to match balanced (parens). See Friedl's 
         /// "Mastering Regular Expressions", 2nd Ed., pp. 328-331.
@@ -261,6 +308,24 @@ namespace Markdown.Xaml
                     , _nestDepth);
             return _nestedParensPattern;
         }
+        private static Regex _imageInline = new Regex(string.Format(@"
+                (                           # wrap whole match in $1
+                    !\[
+                        ({0})               # link text = $2
+                    \]
+                    \(                      # literal paren
+                        [ ]*
+                        ({1})               # href = $3
+                        [ ]*
+                        (                   # $4
+                        (['""])           # quote char = $5
+                        (.*?)               # title = $6
+                        \5                  # matching quote
+                        #[ ]*                # ignore any spaces between closing quote and )
+                        )?                  # title is optional
+                    \)
+                )", GetNestedBracketsPattern(), GetNestedParensPatternWithWhiteSpace()),
+                  RegexOptions.Singleline | RegexOptions.IgnorePatternWhitespace | RegexOptions.Compiled);
 
         private static Regex _anchorInline = new Regex(string.Format(@"
                 (                           # wrap whole match in $1
@@ -281,6 +346,43 @@ namespace Markdown.Xaml
                 )", GetNestedBracketsPattern(), GetNestedParensPattern()),
                   RegexOptions.Singleline | RegexOptions.IgnorePatternWhitespace | RegexOptions.Compiled);
 
+        /// <summary>
+        /// Turn Markdown images into images
+        /// </summary>
+        /// <remarks>
+        /// ![link text](url "title") 
+        /// </remarks>
+        private IEnumerable<Inline> DoImages(string text, Func<string, IEnumerable<Inline>> defaultHandler)
+        {
+            if (text == null)
+            {
+                throw new ArgumentNullException("text");
+            }
+
+            // Next, inline-style links: [link text](url "optional title") or [link text](url "optional title")
+            return Evaluate(text, _imageInline, ImageInlineEvaluator, defaultHandler);
+        }
+        private Inline ImageInlineEvaluator(Match match)
+        {
+            if (match == null)
+            {
+                throw new ArgumentNullException("match");
+            }
+
+            string linkText = match.Groups[2].Value;
+            string url = match.Groups[3].Value;
+            string title = match.Groups[6].Value;
+            ImageSource imgSource = null;
+            try
+            {
+                imgSource = new ImageSourceConverter().ConvertFromString(url) as ImageSource;
+            }
+            catch (Exception e)
+            {
+                return new Run("!" + url){Foreground = Brushes.Red};
+            }
+            return new InlineUIContainer (new Image(){Source = imgSource, Margin = new Thickness(10), Width = imgSource.Width});            
+        }
         /// <summary>
         /// Turn Markdown link shortcuts into hyperlinks
         /// </summary>
